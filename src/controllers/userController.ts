@@ -1,3 +1,6 @@
+import NodeCache from "node-cache";
+const cache = new NodeCache({ stdTTL: 60 }); // Cache expires in 60 seconds
+
 // src/controllers/userController.ts
 import type { Request, Response } from "express";
 import axios from "axios";
@@ -85,6 +88,13 @@ export const getUserById = async (
   try {
     const db = getDb();
     const userId = parseInt(req.params.userId);
+
+    const cached = cache.get(userId);
+    if (cached) {
+      res.json({ fromCache: true, data: cached });
+      return;
+    }
+
     const user = await db.collection("users").findOne({ id: userId });
 
     if (!user) {
@@ -92,7 +102,8 @@ export const getUserById = async (
       return;
     }
 
-    res.json(user);
+    cache.set(userId, user);
+    res.json({ fromCache: false, data: user });
   } catch (err) {
     res.status(500).json({ error: "Failed to get user." });
   }
@@ -113,5 +124,35 @@ export const addUser = async (req: Request, res: Response): Promise<void> => {
     res.status(201).json(newUser);
   } catch (err) {
     res.status(500).json({ error: "Failed to add user." });
+  }
+};
+
+export const getUsers = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const db = getDb();
+
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 10;
+    const sortBy = (req.query.sortBy as string) || "name";
+    const order = req.query.order === "desc" ? -1 : 1;
+
+    const users = await db
+      .collection("users")
+      .find()
+      .sort({ [sortBy]: order })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .toArray();
+
+    const totalUsers = await db.collection("users").countDocuments();
+
+    res.json({
+      totalUsers,
+      currentPage: page,
+      totalPages: Math.ceil(totalUsers / limit),
+      users,
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch users." });
   }
 };
